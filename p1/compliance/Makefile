@@ -13,7 +13,7 @@ describe-vault:
 
 delete-vault:
 	aws glacier delete-vault \
-		--vault-name $(VAULT_NAME)
+		--vault-name $(VAULT_NAME) \
 		--account-id -
 
 policy-from-template:
