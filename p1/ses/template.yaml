@@ -1,0 +1,82 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Creates an Email-Receiving Pipeline.
+
+Parameters:
+  CfnBucket:
+    Type: String
+    Description: Bucket where the nested CF stack resides to help with this automation.
+    AllowedPattern: ".+"
+  Domain:
+    Type: String
+    Description: Domain name to verify and use for outbound emails.
+    AllowedPattern: ".+"
+
+Resources:
+  CfnSESResources:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.amazonaws.com/${CfnBucket}/aws-cfn-ses-domain-0.3.cf.yaml"
+      Parameters:
+        LambdaCodeS3Bucket: !Ref CfnBucket
+        LambdaCodeS3Key: aws-cfn-ses-domain-0.3.lambda.zip
+
+  SESDomain:
+    Type: Custom::SES_Domain
+    Properties:
+      ServiceToken: !GetAtt CfnSESResources.Outputs.CustomDomainIdentityArn
+      Domain: !Ref Domain
+      EnableReceive: true
+
+  Route53RecordsForSES:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      HostedZoneName: !Sub "${Domain}."
+      RecordSets: !GetAtt SESDomain.Route53RecordSets
+
+  ReceiptBucket:
+    Type: AWS::S3::Bucket
+
+  ReceiptBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ReceiptBucket
+      PolicyDocument: !Sub |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+              {
+                  "Sid": "AllowSESPuts",
+                  "Effect": "Allow",
+                  "Principal": {
+                      "Service": "ses.amazonaws.com"
+                  },
+                  "Action": "s3:PutObject",
+                  "Resource": "arn:aws:s3:::${ReceiptBucket}/*",
+                  "Condition": {
+                      "StringEquals": {
+                          "aws:Referer": "${AWS::AccountId}"
+                      }
+                  }
+              }
+          ]
+        }
+
+  ReceiptRuleSet:
+   Type: AWS::SES::ReceiptRuleSet
+
+  ReceiptRule:
+    Type: AWS::SES::ReceiptRule
+    DependsOn: [ReceiptBucket, ReceiptBucketPolicy]
+    Properties:
+      RuleSetName: !Ref ReceiptRuleSet
+      Rule:
+        Enabled: true
+        ScanEnabled: true
+        Actions:
+          - S3Action:
+              BucketName: !Ref ReceiptBucket
+
+Outputs:
+  ReceiptBucket:
+    Description: Email delivery bucket
+    Value: !Ref ReceiptBucket
