@@ -1,6 +1,6 @@
-# cca670
+# CCA670
 
-## Compliant Glacier Vault
+## P1 Compliant Glacier Vault
 
 ```
 $ make create-vault 
@@ -43,7 +43,7 @@ aws glacier describe-vault \
 
 ```
 
-## SES Delivery Pipeline
+## P1 SES Delivery Pipeline
 
 ```
 $ make cfn-resources-bucket
