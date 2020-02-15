@@ -3,7 +3,10 @@ TEMPLATE = deploy.yaml
 STACK_NAME = cca670-$(PROJECT)
 BUCKET ?= $(STACK_NAME)
 
-.PHONY: vars describe deploy destroy test
+TEST_PASSPHRASE ?= test
+TEST_FILE ?= datafile
+
+.PHONY: vars describe deploy destroy upload download encrypt decrypt
 
 vars:
 	@echo PROJECT = $(PROJECT)
@@ -31,6 +34,28 @@ destroy:
 	aws cloudformation delete-stack \
 		--stack-name $(STACK_NAME)
 
-test:
-	aws s3 cp datafile.in.txt s3://$(BUCKET)
-	aws s3 cp s3://$(BUCKET)/datafile.in.txt datafile.out.txt
+### CUSTOM TOOLING FOR ENCRYPT/DECRYPT ###
+
+build:
+	go build -o bin/encrypt ./cmd/encrypt
+	go build -o bin/decrypt ./cmd/decrypt
+
+encrypt:
+	./bin/encrypt \
+		--passphrase $(TEST_PASSPHRASE) \
+		--file $(TEST_FILE)
+
+decrypt:
+	./bin/decrypt \
+		--passphrase $(TEST_PASSPHRASE) \
+		--file $(TEST_FILE).encrypted \
+		--outfile $(TEST_FILE).decrypted
+
+### TEST ###
+
+upload: encrypt
+	aws s3 cp datafile.encrypted s3://$(BUCKET)
+
+download:
+	aws s3 cp s3://$(BUCKET)/datafile.encrypted .
+	$(MAKE) decrypt

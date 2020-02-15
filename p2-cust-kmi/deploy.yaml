@@ -1,0 +1,14 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Customer managed KMI'
+
+Parameters:
+  BucketName:
+    Description: "Name of S3 bucket to put objects."
+    Type: String
+    Default: "unset"
+
+Resources:
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
