@@ -1,0 +1,48 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'KMS customer managed CMK for AWS services'
+
+Parameters:
+  BucketName:
+    Description: "Name of S3 bucket to put objects."
+    Type: String
+    Default: "unset"
+
+Resources:
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      BucketEncryption: 
+        ServerSideEncryptionConfiguration: 
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: aws:kms
+            KMSMasterKeyID: !Ref Key
+
+  Key:
+    Type: 'AWS::KMS::Key'
+    Properties:
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+          Action: 'kms:*'
+          Resource: '*'
+        - Effect: Allow
+          Principal:
+            AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:user/ops'
+          Action:
+          - kms:DescribeKey
+          - kms:Encrypt
+          - kms:Decrypt
+          - kms:ReEncrypt*
+          - kms:GenerateDataKey
+          - kms:GenerateDataKeyWithoutPlaintext
+          Resource: '*'
+
+  KeyAlias:
+    Type: 'AWS::KMS::Alias'
+    Properties:
+      AliasName: !Sub 'alias/cca670'
+      TargetKeyId: !Ref Key
