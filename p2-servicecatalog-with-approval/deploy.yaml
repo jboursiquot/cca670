@@ -1,0 +1,214 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: approval workflow for service catalog product launch
+Metadata:
+  LICENSE: >-
+    Copyright 2017 Amazon Web Services, Inc. or its affiliates. All Rights
+    Reserved. This file is licensed to you under the AWS Customer Agreement (the
+    "License"). You may not use this file except in compliance with the License.
+    A copy of the License is located at http://aws.amazon.com/agreement/ . This
+    file is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF
+    ANY KIND, express or implied. See the License for the specific language
+    governing permissions and limitations under the License.
+Parameters:
+  EmailID:
+    AllowedPattern: '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+    ConstraintDescription: This is not a valid email id.
+    Default: "abc.xyz@email.com"
+    Description: Enter Approvers Email ID
+    MaxLength: '64'
+    MinLength: '1'
+    Type: String
+Resources:
+  ApprovalNotificationTopic:
+    Type: "AWS::SNS::Topic"
+    Properties:
+      Subscription:
+        -
+          Endpoint: !Ref EmailID
+          Protocol: email
+      TopicName: "CFNApprovalNotificationTopic"
+  LambdaInvocationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - apigateway.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: '/'
+      Policies:
+      - PolicyName: apigateway-lambda-policy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - lambda:InvokeFunction
+            Resource: '*'
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: '/'
+      Policies:
+      - PolicyName: lambda-log-sns-policy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup,
+            - logs:CreateLogStream,
+            - logs:PutLogEvents
+            Resource: arn:aws:logs:*:*:*
+          - Effect: Allow
+            Action:
+            - sns:Get*
+            - sns:List*
+            - sns:Publish
+            Resource: arn:aws:sns:*:*:*
+  ApprovalApi:
+    Type: 'AWS::ApiGateway::RestApi'
+    Properties:
+      Description: 'API for Approving Cloudformation template launch'
+      Name: 'ApprovalAPI'
+  ApproveEvent:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      RestApiId: !Ref ApprovalApi
+      ParentId: !GetAtt ApprovalApi.RootResourceId
+      PathPart: 'approveStack'
+  ApprovalMethod:
+    Type: 'AWS::ApiGateway::Method'
+    Properties:
+      RestApiId: !Ref ApprovalApi
+      ResourceId: !Ref ApproveEvent
+      HttpMethod: 'GET'
+      AuthorizationType: 'NONE'
+      Integration:
+          IntegrationHttpMethod : 'POST'
+          Credentials: !GetAtt LambdaInvocationRole.Arn
+          Type: 'AWS_PROXY'
+          Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApprovalFunction.Arn}/invocations
+  ApprovalWebDeployment:
+    DependsOn: ApprovalMethod
+    Type: 'AWS::ApiGateway::Deployment'
+    Properties:
+      RestApiId: !Ref ApprovalApi
+      Description: 'approval api deployment'
+      StageName: 'prod'
+  ApprovalFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.6
+      Code:
+        ZipFile: !Sub |
+          from botocore.vendored import requests
+          import json
+          import logging
+          import base64
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          success_responseData = {
+                "Status" : "SUCCESS",
+                "Reason" : "Approved",
+                "UniqueId" : "ID1234",
+                "Data" : "Owner approved the stack creation"
+                }
+          def lambda_handler(event,context):
+              logger.info(json.dumps(event))
+              if event['queryStringParameters'] and 'waitUrl' in event['queryStringParameters']:
+                  wait_url=event['queryStringParameters']['waitUrl']
+                  decoded_url =base64.b64decode(wait_url);
+                  try:
+                      response = requests.put(decoded_url,
+                                              data=json.dumps(success_responseData))
+                      logger.info("Successfully responded for waithandle")
+                  except Exception as e:
+                      logger.info("Failed executing HTTP request: {}".format(e.code))
+                  return {'statusCode':'200','body':'Successfully Approved'}
+              else:
+                return {'statusCode':'200','body':'No Stack wait url found'}
+  SNSNotificationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.6
+      Environment:
+        Variables:
+          topic_arn: !Ref ApprovalNotificationTopic
+          approval_url: !Sub https://${ApprovalApi}.execute-api.${AWS::Region}.amazonaws.com/prod/approveStack
+      Code:
+        ZipFile: !Sub |
+          from __future__ import print_function
+          import boto3
+          from botocore.vendored import requests
+          import json
+          import logging
+          import os
+          import base64
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          topic_arn = os.environ['topic_arn']
+          approval_url= os.environ['approval_url']+'?waitUrl='
+          sns   = boto3.resource('sns')
+          topic = sns.Topic(topic_arn)
+          responseData = {'Staus':'Completed'}
+
+          def lambda_handler(event, context):
+            #logger.info(json.dumps(event))
+            if event['RequestType'] != 'Create':
+              sendResponse(event, context,'SUCCESS',responseData)
+              return
+            wait_url=event['ResourceProperties']['WaitUrl'].encode()
+            email_id=event['ResourceProperties']['EmailID']
+            encoded_url=base64.b64encode(wait_url);
+            response = topic.publish(
+            Subject='Request for approval to launch Stack for Product',
+            Message='Hi Admin, \n\
+              An user has launched a stack. \n\
+              End-user Email ID : '+email_id+
+              '\nKindly approve by clicking the below URL.\n\n'+
+                   approval_url+encoded_url.decode()+
+              '\n\nPlease ignore if you dont want the stack to be launched.\n\
+              Thanks,\n\
+              Product Approval Team\n')
+            sendResponse(event, context,'SUCCESS',responseData)
+
+          def sendResponse(event, context, responseStatus, responseData):
+            response_body={'Status': responseStatus,
+                    'Reason': 'See the details in CloudWatch Log Stream ' + context.log_stream_name,
+                    'PhysicalResourceId': context.log_stream_name ,
+                    'StackId': event['StackId'],
+                    'RequestId': event['RequestId'],
+                    'LogicalResourceId': event['LogicalResourceId'],
+                    'Data': responseData}
+            try:
+              response = requests.put(event['ResponseURL'],
+                                data=json.dumps(response_body))
+              return True
+            except Exception as e:
+              logger.info("Failed executing HTTP request: {}".format(e.code))
+            return False
+Outputs:
+  LambdaARN:
+    Description: Lambda function ARN to notify approver
+    Value: !GetAtt SNSNotificationLambda.Arn
