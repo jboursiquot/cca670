@@ -1,0 +1,141 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Stack sets up VPCs.
+
+Parameters:
+  NetAppSyncBucketName:
+    Description: "Name of S3 bucket for NetApp to sync with."
+    Type: String
+    Default: "unset"
+
+  NetAppUserPassword:
+    Type: String
+    Default: OverrideMePlease2020
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.103.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: cca670-vpc
+
+  SubnetPublicA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ]
+      CidrBlock: 10.103.0.0/22
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref VPC
+
+  SubnetPublicB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ]
+      CidrBlock: 10.103.8.0/22
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref VPC
+
+  SubnetPublicC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [2, !GetAZs ]
+      CidrBlock: 10.103.16.0/22
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref VPC
+
+  RouteTablePublic:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  SubnetRouteTableAssociatePublicA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTablePublic
+      SubnetId: !Ref SubnetPublicA
+
+  SubnetRouteTableAssociatePublicB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTablePublic
+      SubnetId: !Ref SubnetPublicB
+
+  SubnetRouteTableAssociatePublicC:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTablePublic
+      SubnetId: !Ref SubnetPublicC
+
+  IGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: cca670-igw
+
+  GatewayAttach:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref IGW
+      VpcId: !Ref VPC
+
+  RouteDefaultPublic:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttach
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IGW
+      RouteTableId: !Ref RouteTablePublic
+
+  VPCSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allows the proxying of traffic from all sources within the network.
+      GroupId: !GetAtt VPC.DefaultSecurityGroup
+      CidrIp: !GetAtt VPC.CidrBlock
+      IpProtocol: "-1"
+      
+  NetAppUser:
+    Type: AWS::IAM::User
+    Properties:
+      LoginProfile:
+        Password: !Ref NetAppUserPassword
+
+  AccessKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName: !Ref NetAppUser
+
+  NetAppSyncBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref NetAppSyncBucketName
+
+Outputs:
+  VPC:
+    Description: VPC ID
+    Value: !Ref VPC
+  SubnetPublicA:
+    Description: Public Subnet A's ID
+    Value: !Ref SubnetPublicA
+  SubnetPublicB:
+    Description: Public Subnet B's ID
+    Value: !Ref SubnetPublicB
+  SubnetPublicC:
+    Description: Public Subnet C's ID
+    Value: !Ref SubnetPublicC
+  NetAppUserPassword:
+    Description: NetAppUser account password
+    Value: !Ref NetAppUserPassword
+  AccessKeyID:
+    Description: Access Key ID
+    Value: !Ref AccessKey
+  SecretAccessKey:
+    Description: Secret Access Key
+    Value: !GetAtt AccessKey.SecretAccessKey
+  NetAppSyncBucket:
+    Description: NetApp Sync Bucket
+    Value: !Ref NetAppSyncBucket
