@@ -21,7 +21,7 @@ deploy: validate
 		--template-file $(TEMPLATE) \
 		--capabilities CAPABILITY_NAMED_IAM \
 		--parameter-overrides \
-				BucketName=$(BUCKET)
+				WebsiteBucket=$(BUCKET)
 				
 
 describe:
